@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asset Replacement Decision Simulator — Equinix</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --surface: #111620;
+    --surface2: #161c29;
+    --border: rgba(255,255,255,0.07);
+    --border-bright: rgba(255,255,255,0.13);
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --accent: #3b82f6;
+
+    --stable:  #22c55e;
+    --monitor: #eab308;
+    --warning: #f97316;
+    --replace: #ef4444;
+
+    --stable-bg:  rgba(34,197,94,0.1);
+    --monitor-bg: rgba(234,179,8,0.1);
+    --warning-bg: rgba(249,115,22,0.1);
+    --replace-bg: rgba(239,68,68,0.1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid texture overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app { position: relative; z-index: 1; max-width: 1280px; margin: 0 auto; padding: 2rem 1.5rem 3rem; }
+
+  /* Header */
+  .header { margin-bottom: 2rem; }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 0.5rem; }
+  .logo-line { display: flex; align-items: center; gap: 10px; }
+  .logo-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 12px var(--accent); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .logo-text { font-size: 11px; font-family: 'DM Mono', monospace; color: var(--accent); letter-spacing: 0.12em; text-transform: uppercase; }
+  h1 { font-size: clamp(22px, 3vw, 32px); font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
+  .subtitle { font-size: 13px; color: var(--muted); margin-top: 4px; font-family: 'DM Mono', monospace; }
+
+  /* KPI row */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1.5rem; }
+  .kpi { background: var(--surface); border: 0.5px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; position: relative; overflow: hidden; transition: border-color 0.3s; }
+  .kpi::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; border-radius: 12px 12px 0 0; }
+  .kpi.k-total::before { background: var(--accent); }
+  .kpi.k-replace::before { background: var(--replace); }
+  .kpi.k-risk::before { background: var(--warning); }
+  .kpi.k-capital::before { background: var(--stable); }
+  .kpi-label { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .kpi-value { font-size: 28px; font-weight: 700; line-height: 1; }
+  .kpi.k-total .kpi-value { color: var(--text); }
+  .kpi.k-replace .kpi-value { color: var(--replace); }
+  .kpi.k-risk .kpi-value { color: var(--warning); }
+  .kpi.k-capital .kpi-value { color: var(--stable); }
+  .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: 'DM Mono', monospace; }
+
+  /* Main layout */
+  .main { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
+
+  /* Controls panel */
+  .panel { background: var(--surface); border: 0.5px solid var(--border); border-radius: 14px; padding: 1.5rem; }
+  .panel-title { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 8px; }
+  .panel-title::after { content: ''; flex: 1; height: 0.5px; background: var(--border); }
+
+  .ctrl { margin-bottom: 1.5rem; }
+  .ctrl:last-of-type { margin-bottom: 0; }
+  .ctrl-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .ctrl-name { font-size: 13px; color: var(--text); font-weight: 500; }
+  .ctrl-val { font-size: 13px; font-family: 'DM Mono', monospace; color: var(--accent); font-weight: 500; background: rgba(59,130,246,0.1); padding: 2px 8px; border-radius: 4px; min-width: 48px; text-align: center; transition: background 0.2s; }
+  .ctrl-desc { font-size: 11px; color: var(--muted); margin-bottom: 8px; font-family: 'DM Mono', monospace; }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 3px;
+    background: var(--border-bright);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 8px rgba(59,130,246,0.5);
+    transition: box-shadow 0.2s, transform 0.2s;
+  }
+  input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.2); box-shadow: 0 0 14px rgba(59,130,246,0.7); }
+  input[type=range].s-stable::-webkit-slider-thumb { background: var(--stable); box-shadow: 0 0 8px rgba(34,197,94,0.5); }
+  input[type=range].s-monitor::-webkit-slider-thumb { background: var(--monitor); box-shadow: 0 0 8px rgba(234,179,8,0.5); }
+  input[type=range].s-warning::-webkit-slider-thumb { background: var(--warning); box-shadow: 0 0 8px rgba(249,115,22,0.5); }
+  input[type=range].s-replace::-webkit-slider-thumb { background: var(--replace); box-shadow: 0 0 8px rgba(239,68,68,0.5); }
+
+  .sep { height: 0.5px; background: var(--border); margin: 1.5rem 0; }
+
+  /* Category filter */
+  .cat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .cat-btn {
+    background: var(--surface2);
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-family: 'DM Mono', monospace;
+    color: var(--muted);
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.15s;
+    letter-spacing: 0.04em;
+  }
+  .cat-btn:hover { border-color: var(--accent); color: var(--text); }
+  .cat-btn.active { background: rgba(59,130,246,0.15); border-color: var(--accent); color: var(--accent); }
+
+  /* Zone legend */
+  .zone-legend { display: flex; flex-direction: column; gap: 6px; margin-top: 1rem; }
+  .zone-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .zone-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .zone-name { flex: 1; color: var(--text); }
+  .zone-count { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+
+  /* Chart panel */
+  .chart-panel { background: var(--surface); border: 0.5px solid var(--border); border-radius: 14px; padding: 1.5rem; }
+  .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 8px; }
+  .chart-title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .chart-hint { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; }
+  .chart-wrap { position: relative; width: 100%; height: 420px; }
+
+  /* Tooltip card */
+  #tooltip {
+    position: fixed;
+    background: var(--surface2);
+    border: 0.5px solid var(--border-bright);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 999;
+    display: none;
+    min-width: 180px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #tooltip .t-id { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+  #tooltip .t-row { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 3px; }
+  #tooltip .t-key { color: var(--muted); }
+  #tooltip .t-val { font-family: 'DM Mono', monospace; font-weight: 500; }
+
+  /* Table */
+  .table-wrap { margin-top: 1.25rem; }
+  .table-section-title { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .table-section-title::after { content:''; flex:1; height:0.5px; background:var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 6px 10px; text-align: left; border-bottom: 0.5px solid var(--border); }
+  td { padding: 7px 10px; border-bottom: 0.5px solid var(--border); color: var(--text); font-family: 'DM Mono', monospace; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .badge::before { content:''; width:5px; height:5px; border-radius:50%; }
+  .badge.stable  { background: var(--stable-bg);  color: var(--stable);  } .badge.stable::before  { background: var(--stable); }
+  .badge.monitor { background: var(--monitor-bg); color: var(--monitor); } .badge.monitor::before { background: var(--monitor); }
+  .badge.warning { background: var(--warning-bg); color: var(--warning); } .badge.warning::before { background: var(--warning); }
+  .badge.replace { background: var(--replace-bg); color: var(--replace); } .badge.replace::before { background: var(--replace); }
+
+  .bar-bg { background: var(--border); height: 4px; border-radius: 2px; overflow: hidden; width: 80px; }
+  .bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+  @media (max-width: 900px) {
+    .main { grid-template-columns: 1fr; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+  }
+
+  /* Fade in animation */
+  .fade-in { animation: fadeIn 0.5s ease both; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: none; } }
+  .fade-in:nth-child(1) { animation-delay: 0.05s; }
+  .fade-in:nth-child(2) { animation-delay: 0.1s; }
+  .fade-in:nth-child(3) { animation-delay: 0.15s; }
+  .fade-in:nth-child(4) { animation-delay: 0.2s; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <div class="header fade-in">
+    <div class="header-top">
+      <div>
+        <div class="logo-line" style="margin-bottom:8px;">
+          <div class="logo-dot"></div>
+          <span class="logo-text">Equinix — Infrastructure Analytics</span>
+        </div>
+        <h1>Repair vs. Replace<br>Decision Simulator</h1>
+        <p class="subtitle">// adjust thresholds to model replacement strategy in real time</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI row -->
+  <div class="kpi-row">
+    <div class="kpi k-total fade-in">
+      <div class="kpi-label">Total assets</div>
+      <div class="kpi-value" id="kpi-total">40</div>
+      <div class="kpi-sub">in portfolio</div>
+    </div>
+    <div class="kpi k-replace fade-in">
+      <div class="kpi-label">Replace now</div>
+      <div class="kpi-value" id="kpi-replace">—</div>
+      <div class="kpi-sub" id="kpi-replace-pct">of portfolio</div>
+    </div>
+    <div class="kpi k-risk fade-in">
+      <div class="kpi-label">At risk</div>
+      <div class="kpi-value" id="kpi-risk">—</div>
+      <div class="kpi-sub">monitor + replace</div>
+    </div>
+    <div class="kpi k-capital fade-in">
+      <div class="kpi-label">Capital required</div>
+      <div class="kpi-value" id="kpi-capital">—</div>
+      <div class="kpi-sub">replacement spend</div>
+    </div>
+  </div>
+
+  <!-- Main layout -->
+  <div class="main">
+
+    <!-- Controls -->
+    <div class="panel">
+      <div class="panel-title">Model thresholds</div>
+
+      <!-- Financial trigger -->
+      <div class="ctrl">
+        <div class="ctrl-head">
+          <span class="ctrl-name">Replace trigger</span>
+          <span class="ctrl-val s-replace" id="v-financial">75%</span>
+        </div>
+        <div class="ctrl-desc">cost ratio → replace</div>
+        <input type="range" id="sl-financial" class="s-replace" min="50" max="95" value="75" step="1">
+      </div>
+
+      <!-- Reliability threshold -->
+      <div class="ctrl">
+        <div class="ctrl-head">
+          <span class="ctrl-name">Warning trigger</span>
+          <span class="ctrl-val s-warning" id="v-reliability">60%</span>
+        </div>
+        <div class="ctrl-desc">cost ratio → warning</div>
+        <input type="range" id="sl-reliability" class="s-warning" min="30" max="90" value="60" step="1">
+      </div>
+
+      <!-- Repair frequency -->
+      <div class="ctrl">
+        <div class="ctrl-head">
+          <span class="ctrl-name">Frequency trigger</span>
+          <span class="ctrl-val s-monitor" id="v-frequency">8</span>
+        </div>
+        <div class="ctrl-desc">max repairs → flag</div>
+        <input type="range" id="sl-frequency" class="s-monitor" min="3" max="16" value="8" step="1">
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="panel-title">Filter by category</div>
+      <div class="cat-grid" id="cat-grid">
+        <button class="cat-btn active" data-cat="ALL">ALL</button>
+        <button class="cat-btn" data-cat="GEN">GEN</button>
+        <button class="cat-btn" data-cat="UPS">UPS</button>
+        <button class="cat-btn" data-cat="HVAC">HVAC</button>
+        <button class="cat-btn" data-cat="CHLR">CHLR</button>
+        <button class="cat-btn" data-cat="SWG">SWG</button>
+        <button class="cat-btn" data-cat="PDU">PDU</button>
+        <button class="cat-btn" data-cat="CRAC">CRAC</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="panel-title">Zone distribution</div>
+      <div class="zone-legend">
+        <div class="zone-row">
+          <div class="zone-dot" style="background:var(--stable);box-shadow:0 0 6px var(--stable)"></div>
+          <span class="zone-name">Stable</span>
+          <span class="zone-count" id="zc-stable">—</span>
+        </div>
+        <div class="zone-row">
+          <div class="zone-dot" style="background:var(--monitor);box-shadow:0 0 6px var(--monitor)"></div>
+          <span class="zone-name">Monitor</span>
+          <span class="zone-count" id="zc-monitor">—</span>
+        </div>
+        <div class="zone-row">
+          <div class="zone-dot" style="background:var(--warning);box-shadow:0 0 6px var(--warning)"></div>
+          <span class="zone-name">Warning</span>
+          <span class="zone-count" id="zc-warning">—</span>
+        </div>
+        <div class="zone-row">
+          <div class="zone-dot" style="background:var(--replace);box-shadow:0 0 6px var(--replace)"></div>
+          <span class="zone-name">Replace</span>
+          <span class="zone-count" id="zc-replace">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chart + Table -->
+    <div>
+      <div class="chart-panel">
+        <div class="chart-header">
+          <span class="chart-title">Asset risk scatter plot</span>
+          <span class="chart-hint">hover dots for details · bubble size = replacement cost</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="chart"></canvas>
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-section-title">Flagged assets — replace now</div>
+          <div style="overflow-x:auto;">
+            <table id="replace-table">
+              <thead>
+                <tr>
+                  <th>Asset ID</th>
+                  <th>Category</th>
+                  <th>Repairs</th>
+                  <th>Cost ratio</th>
+                  <th>Replace cost</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Custom tooltip -->
+<div id="tooltip">
+  <div class="t-id" id="tt-id"></div>
+  <div class="t-row"><span class="t-key">Category</span><span class="t-val" id="tt-cat"></span></div>
+  <div class="t-row"><span class="t-key">Repair count</span><span class="t-val" id="tt-repairs"></span></div>
+  <div class="t-row"><span class="t-key">Cum. repair cost</span><span class="t-val" id="tt-cost"></span></div>
+  <div class="t-row"><span class="t-key">Replace cost</span><span class="t-val" id="tt-repcost"></span></div>
+  <div class="t-row"><span class="t-key">Cost ratio</span><span class="t-val" id="tt-ratio"></span></div>
+  <div class="t-row" style="margin-top:6px;"><span class="t-key">Status</span><span class="t-val" id="tt-status"></span></div>
+</div>
+
+<script>
+const ASSETS = [
+  {id:'HVAC-101',repairs:1,cumCost:8500,repCost:120000},
+  {id:'HVAC-102',repairs:8,cumCost:95000,repCost:120000},
+  {id:'HVAC-103',repairs:4,cumCost:62000,repCost:125000},
+  {id:'HVAC-104',repairs:2,cumCost:22000,repCost:120000},
+  {id:'HVAC-105',repairs:5,cumCost:75000,repCost:120000},
+  {id:'HVAC-106',repairs:12,cumCost:105000,repCost:120000},
+  {id:'HVAC-107',repairs:3,cumCost:45000,repCost:120000},
+  {id:'UPS-201',repairs:0,cumCost:0,repCost:450000},
+  {id:'UPS-202',repairs:12,cumCost:380000,repCost:450000},
+  {id:'UPS-203',repairs:6,cumCost:280000,repCost:450000},
+  {id:'UPS-204',repairs:8,cumCost:310000,repCost:450000},
+  {id:'UPS-205',repairs:1,cumCost:45000,repCost:450000},
+  {id:'UPS-206',repairs:13,cumCost:410000,repCost:450000},
+  {id:'UPS-207',repairs:5,cumCost:245000,repCost:450000},
+  {id:'GEN-401',repairs:14,cumCost:525000,repCost:600000},
+  {id:'GEN-402',repairs:2,cumCost:45000,repCost:600000},
+  {id:'GEN-403',repairs:3,cumCost:110000,repCost:600000},
+  {id:'GEN-404',repairs:10,cumCost:460000,repCost:600000},
+  {id:'GEN-405',repairs:2,cumCost:95000,repCost:600000},
+  {id:'GEN-406',repairs:11,cumCost:490000,repCost:600000},
+  {id:'CHLR-501',repairs:9,cumCost:240000,repCost:300000},
+  {id:'CHLR-502',repairs:3,cumCost:90000,repCost:310000},
+  {id:'CHLR-503',repairs:6,cumCost:195000,repCost:300000},
+  {id:'CHLR-504',repairs:0,cumCost:0,repCost:300000},
+  {id:'CHLR-505',repairs:8,cumCost:215000,repCost:300000},
+  {id:'CHLR-506',repairs:2,cumCost:55000,repCost:300000},
+  {id:'SWG-601',repairs:5,cumCost:165000,repCost:200000},
+  {id:'SWG-602',repairs:2,cumCost:30000,repCost:210000},
+  {id:'SWG-603',repairs:7,cumCost:145000,repCost:200000},
+  {id:'SWG-604',repairs:4,cumCost:85000,repCost:200000},
+  {id:'SWG-605',repairs:3,cumCost:55000,repCost:200000},
+  {id:'SWG-606',repairs:6,cumCost:135000,repCost:200000},
+  {id:'PDU-701',repairs:11,cumCost:78000,repCost:90000},
+  {id:'PDU-702',repairs:4,cumCost:55000,repCost:95000},
+  {id:'PDU-703',repairs:9,cumCost:72000,repCost:90000},
+  {id:'PDU-704',repairs:2,cumCost:25000,repCost:90000},
+  {id:'CRAC-801',repairs:1,cumCost:12000,repCost:85000},
+  {id:'CRAC-802',repairs:7,cumCost:68000,repCost:85000},
+  {id:'CRAC-803',repairs:5,cumCost:58000,repCost:85000},
+  {id:'CRAC-804',repairs:0,cumCost:0,repCost:85000},
+];
+
+const COLOR_MAP = { stable:'#22c55e', monitor:'#eab308', warning:'#f97316', replace:'#ef4444' };
+const BG_MAP    = { stable:'rgba(34,197,94,0.75)', monitor:'rgba(234,179,8,0.75)', warning:'rgba(249,115,22,0.75)', replace:'rgba(239,68,68,0.75)' };
+
+let activeCat = 'ALL';
+let financial = 75, reliability = 60, frequency = 8;
+
+function getTier(a) {
+  const ratio = a.cumCost / a.repCost * 100;
+  if (ratio >= financial || a.repairs >= frequency) return 'replace';
+  if (ratio >= reliability) return 'warning';
+  if (ratio >= reliability * 0.7) return 'monitor';
+  return 'stable';
+}
+
+function fmt$(n) {
+  if (n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n/1e3).toFixed(0) + 'K';
+  return '$' + n;
+}
+
+function fmtK(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(0) + 'K';
+  return n;
+}
+
+function filtered() {
+  return ASSETS.filter(a => activeCat === 'ALL' || a.id.startsWith(activeCat));
+}
+
+// Chart.js zone background plugin
+const zonePlugin = {
+  id: 'zones',
+  beforeDraw(chart) {
+    const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
+    const repY    = y.getPixelForValue(financial);
+    const warnY   = y.getPixelForValue(reliability);
+    const freqX   = x.getPixelForValue(frequency);
+
+    ctx.save();
+
+    // Zone fills
+    ctx.fillStyle = 'rgba(239,68,68,0.05)';
+    ctx.fillRect(left, top, right-left, Math.max(0, repY - top));
+
+    ctx.fillStyle = 'rgba(249,115,22,0.05)';
+    const warnTop = Math.min(warnY, repY);
+    ctx.fillRect(left, warnTop, right-left, Math.max(0, repY - warnTop));
+
+    // Replace threshold line
+    if (repY >= top && repY <= bottom) {
+      ctx.strokeStyle = 'rgba(239,68,68,0.6)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(left, repY); ctx.lineTo(right, repY); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(239,68,68,0.8)';
+      ctx.font = '500 10px DM Mono, monospace';
+      ctx.fillText('REPLACE ≥ ' + financial + '%', left + 6, repY - 4);
+    }
+
+    // Warning threshold line
+    if (warnY >= top && warnY <= bottom && warnY !== repY) {
+      ctx.strokeStyle = 'rgba(249,115,22,0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(left, warnY); ctx.lineTo(right, warnY); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(249,115,22,0.8)';
+      ctx.font = '500 10px DM Mono, monospace';
+      ctx.fillText('WARNING ≥ ' + reliability + '%', left + 6, warnY - 4);
+    }
+
+    // Frequency threshold line
+    if (freqX >= left && freqX <= right) {
+      ctx.strokeStyle = 'rgba(234,179,8,0.4)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(freqX, top); ctx.lineTo(freqX, bottom); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(234,179,8,0.7)';
+      ctx.font = '500 10px DM Mono, monospace';
+      ctx.save();
+      ctx.translate(freqX + 4, bottom - 6);
+      ctx.rotate(-Math.PI/2);
+      ctx.fillText('FREQ ≥ ' + frequency, 0, 0);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+};
+
+Chart.register(zonePlugin);
+
+const ctx = document.getElementById('chart').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'bubble',
+  data: { datasets: [] },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 250 },
+    plugins: {
+      legend: { display: false },
+      tooltip: { enabled: false }
+    },
+    scales: {
+      x: {
+        min: -0.5,
+        max: 16.5,
+        title: { display: true, text: 'Repair Frequency (count)', color: '#6b7280', font: { size: 11, family: 'DM Mono' } },
+        grid: { color: 'rgba(255,255,255,0.04)' },
+        ticks: { color: '#6b7280', font: { size: 11, family: 'DM Mono' }, stepSize: 2 },
+        border: { color: 'rgba(255,255,255,0.1)' }
+      },
+      y: {
+        min: -5,
+        max: 110,
+        title: { display: true, text: 'Value Consumed — % of Replacement Cost', color: '#6b7280', font: { size: 11, family: 'DM Mono' } },
+        grid: { color: 'rgba(255,255,255,0.04)' },
+        ticks: { color: '#6b7280', font: { size: 11, family: 'DM Mono' }, callback: v => v + '%' },
+        border: { color: 'rgba(255,255,255,0.1)' }
+      }
+    },
+    onHover(e, elements) {
+      const tt = document.getElementById('tooltip');
+      if (!elements.length) { tt.style.display = 'none'; return; }
+      const el = elements[0];
+      const raw = chart.data.datasets[el.datasetIndex].data[el.index];
+      const a = raw._asset;
+      if (!a) { tt.style.display = 'none'; return; }
+      const tier = getTier(a);
+      document.getElementById('tt-id').textContent = a.id;
+      document.getElementById('tt-id').style.color = COLOR_MAP[tier];
+      document.getElementById('tt-cat').textContent = a.id.replace(/-\d+/, '');
+      document.getElementById('tt-repairs').textContent = a.repairs;
+      document.getElementById('tt-cost').textContent = fmt$(a.cumCost);
+      document.getElementById('tt-repcost').textContent = fmt$(a.repCost);
+      document.getElementById('tt-ratio').textContent = (a.cumCost/a.repCost*100).toFixed(1) + '%';
+      document.getElementById('tt-status').textContent = tier.toUpperCase();
+      document.getElementById('tt-status').style.color = COLOR_MAP[tier];
+      tt.style.display = 'block';
+      tt.style.left = (e.native.clientX + 16) + 'px';
+      tt.style.top  = (e.native.clientY - 20) + 'px';
+    }
+  }
+});
+
+document.getElementById('chart').addEventListener('mouseleave', () => {
+  document.getElementById('tooltip').style.display = 'none';
+});
+
+function update() {
+  const data = filtered();
+  const tierGroups = { stable: [], monitor: [], warning: [], replace: [] };
+  data.forEach(a => tierGroups[getTier(a)].push(a));
+
+  chart.data.datasets = Object.entries(tierGroups).map(([tier, assets]) => ({
+    label: tier,
+    data: assets.map(a => ({
+      x: a.repairs,
+      y: +(a.cumCost / a.repCost * 100).toFixed(1),
+      r: Math.max(6, Math.min(20, a.repCost / 45000)),
+      _asset: a
+    })),
+    backgroundColor: BG_MAP[tier],
+    borderColor: COLOR_MAP[tier],
+    borderWidth: 1.5,
+    hoverBorderWidth: 2.5,
+    hoverBorderColor: '#ffffff',
+  }));
+
+  chart.options.scales.x.max = Math.max(16.5, frequency + 2);
+  chart.update('none');
+
+  // KPIs
+  const replaceList = tierGroups.replace;
+  const capital = replaceList.reduce((s, a) => s + a.repCost, 0);
+  const atRisk = replaceList.length + tierGroups.warning.length + tierGroups.monitor.length;
+
+  document.getElementById('kpi-total').textContent = data.length;
+  document.getElementById('kpi-replace').textContent = replaceList.length;
+  document.getElementById('kpi-replace-pct').textContent = Math.round(replaceList.length / data.length * 100) + '% of portfolio';
+  document.getElementById('kpi-risk').textContent = atRisk;
+  document.getElementById('kpi-capital').textContent = '$' + fmtK(capital);
+
+  // Zone counts
+  document.getElementById('zc-stable').textContent = tierGroups.stable.length + ' assets';
+  document.getElementById('zc-monitor').textContent = tierGroups.monitor.length + ' assets';
+  document.getElementById('zc-warning').textContent = tierGroups.warning.length + ' assets';
+  document.getElementById('zc-replace').textContent = tierGroups.replace.length + ' assets';
+
+  // Table — replace only, sorted by ratio desc
+  const tableAssets = [...replaceList].sort((a,b) => (b.cumCost/b.repCost) - (a.cumCost/a.repCost));
+  const tbody = document.getElementById('table-body');
+  if (tableAssets.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem;">No assets currently flagged for replacement</td></tr>';
+  } else {
+    tbody.innerHTML = tableAssets.map(a => {
+      const ratio = (a.cumCost / a.repCost * 100).toFixed(1);
+      const barW = Math.min(100, ratio);
+      const barColor = ratio >= 90 ? 'var(--replace)' : ratio >= 75 ? 'var(--warning)' : 'var(--monitor)';
+      return `<tr>
+        <td style="font-weight:600;color:var(--text)">${a.id}</td>
+        <td>${a.id.replace(/-\d+/,'')}</td>
+        <td>${a.repairs}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="bar-bg"><div class="bar-fill" style="width:${barW}%;background:${barColor}"></div></div>
+            <span>${ratio}%</span>
+          </div>
+        </td>
+        <td>${fmt$(a.repCost)}</td>
+        <td><span class="badge replace">Replace</span></td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+// Slider events
+document.getElementById('sl-financial').addEventListener('input', e => {
+  financial = parseInt(e.target.value);
+  if (reliability >= financial) { reliability = financial - 5; document.getElementById('sl-reliability').value = reliability; }
+  document.getElementById('v-financial').textContent = financial + '%';
+  document.getElementById('v-reliability').textContent = reliability + '%';
+  update();
+});
+document.getElementById('sl-reliability').addEventListener('input', e => {
+  reliability = parseInt(e.target.value);
+  if (reliability >= financial) { financial = reliability + 5; document.getElementById('sl-financial').value = financial; }
+  document.getElementById('v-reliability').textContent = reliability + '%';
+  document.getElementById('v-financial').textContent = financial + '%';
+  update();
+});
+document.getElementById('sl-frequency').addEventListener('input', e => {
+  frequency = parseInt(e.target.value);
+  document.getElementById('v-frequency').textContent = frequency;
+  update();
+});
+
+// Category buttons
+document.getElementById('cat-grid').addEventListener('click', e => {
+  const btn = e.target.closest('.cat-btn');
+  if (!btn) return;
+  activeCat = btn.dataset.cat;
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.toggle('active', b === btn));
+  update();
+});
+
+update();
+</script>
+</body>
+</html>
